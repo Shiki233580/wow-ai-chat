@@ -11,6 +11,7 @@ internal static class Tests
         var checks = new List<object>();
         Directory.CreateDirectory(Path.Combine(root, "verification"));
         void Check(string name, bool pass) { checks.Add(new { name, pass }); File.WriteAllText(Path.Combine(root,"verification","transport-progress.json"),JsonSerializer.Serialize(checks)); if (!pass) throw new Exception("FAIL: " + name); }
+        await DeliveryFlowTests.Run(Check);
         Check("scene instruction is proactive", ChatApi.TaskInstruction(new Packet {generationMode="scene"}).Contains("主动"));
         Check("signal instruction preserves intent", ChatApi.TaskInstruction(new Packet {generationMode="signal"}).Contains("意图不能丢失"));
         Check("legacy task remains reply", ChatApi.TaskInstruction(new Packet()).Contains("回复最后一句"));

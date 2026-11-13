@@ -65,16 +65,18 @@ internal sealed class BridgeDispatcher(IBridgePort port)
     static bool ValidKeys(Packet p)=>BridgeInputPolicy.Extended(p);
     bool Same(Packet p,string session,int? request) => p.protocol==8 && ValidAlphabet(p) && Alphabet(p)==alphabet && p.session==session && p.bindingsReady && ValidKeys(p) && p.bridgeOpenKey==openKey && p.bridgeExecuteKey==executeKey && p.bridgeOpenMods==openMods && p.bridgeExecuteMods==executeMods && (request==null||p.requestId==request);
     void Enabled() { if(!port.Enabled) throw new OperationCanceledException("Bridge paused or closing"); }
-    async Task<Packet> Wait(string session,int? request,Func<Packet,bool> predicate,string label)
+    async Task<Packet> Wait(string session,int? request,Func<Packet,bool> predicate,string label,int? openingAfter=null)
     {
         for(int i=0;i<BridgeTiming.AckPollCount;i++) {
             Enabled(); var p=port.Read();
-            if(p==null||!Same(p,session,request)) throw new InvalidOperationException("Bridge state lost: "+label);
+            if(p==null) { await port.Delay(); continue; } // Torn/occluded frame: read-only retry, never inject blindly.
+            if(!Same(p,session,request)) throw new InvalidOperationException("Bridge state lost: "+label);
+            if(!string.IsNullOrEmpty(p.bridgeError) && !(openingAfter.HasValue && p.receiverNonce<=openingAfter.Value))
+                throw new InvalidOperationException("Addon receiver rejected at "+label+": "+p.bridgeError+" ["+p.bridgeRxDiagnostic+"]");
             if(predicate(p)) return p; // Read-only ACK may complete even if input resumes.
             if(p.professionBusy) throw new InvalidOperationException("Profession opened during bridge: "+label);
             if(!port.KeysUp) throw new InvalidOperationException("Communication modifier/function key interrupted: "+label);
             if(p.typing) throw new InvalidOperationException("Unrelated input focus: "+label);
-            if(!string.IsNullOrEmpty(p.bridgeError)) throw new InvalidOperationException("Addon receiver rejected at "+label+": "+p.bridgeError+" ["+p.bridgeRxDiagnostic+"]");
             await port.Delay();
         }
         throw new TimeoutException("No verified addon acknowledgement: "+label);
@@ -86,11 +88,11 @@ internal sealed class BridgeDispatcher(IBridgePort port)
         Enabled();var initial=port.Read();alphabet=initial==null?"":Alphabet(initial);
         openKey=initial?.bridgeOpenKey??0;executeKey=initial?.bridgeExecuteKey??0;openMods=initial?.bridgeOpenMods??0;executeMods=initial?.bridgeExecuteMods??0;
         if(initial==null||!Same(initial,session,request)||initial.professionBusy||initial.typing||!port.KeysUp) return false;
-        if(initial.receiverOpen && initial.receiverLength>0) return false; // Let the partial receiver expire; never append into it.
+        // A previous attempt owns no live cursor here. Reset its partial stream explicitly; never append blindly.
         int initialNonce=initial.receiverNonce;
-        bool alreadyOpen=initial.receiverOpen;
+        bool alreadyOpen=initial.receiverOpen && initial.receiverLength==0 && string.IsNullOrEmpty(initial.bridgeError);
         if(!alreadyOpen) await port.OpenReceiver(openKey,openMods);
-        var ready=await Wait(session,request,p=>p.receiverOpen&&(alreadyOpen?p.receiverNonce==initialNonce:p.receiverNonce>initialNonce),"open_receiver");
+        var ready=await Wait(session,request,p=>p.receiverOpen&&(alreadyOpen?p.receiverNonce==initialNonce:p.receiverNonce>initialNonce),"open_receiver",alreadyOpen?null:initialNonce);
         int nonce=ready.receiverNonce;
         var envelope=BridgeEnvelope.Create(session,nonce,command);
         Enabled();var check=port.Read();
@@ -129,6 +131,12 @@ internal static class BridgeInputPolicy
   if((!standard&&p.bridgeTransport!="keys3-v1")||p.bridgeDataKeys.Length!=count)return false;
   var keys=p.bridgeDataKeys.Concat(new[]{new BridgeKey(p.bridgeOpenKey,p.bridgeOpenMods),new BridgeKey(p.bridgeExecuteKey,p.bridgeExecuteMods)}).ToArray();
   return keys.All(k=>(safe?AllowedKey(k.key)&&!(k.key>=124&&k.key<=135):k.key>=min&&k.key<=max)&&k.mods==0)&&keys.Distinct().Count()==count+2;
+ }
+ internal static bool Clear(Packet? p,Func<int,bool> held)
+ {
+  if(!Extended(p))return false;
+  foreach(int k in new[]{16,17,18,91,92,160,161,162,163,164,165})if(held(k))return false;
+  return !p!.bridgeDataKeys.Select(k=>k.key).Append(p.bridgeOpenKey).Append(p.bridgeExecuteKey).Any(held);
  }
  internal static bool Clear(bool extended,Func<int,bool> held)
  {

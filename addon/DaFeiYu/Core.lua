@@ -1,6 +1,6 @@
 DFY = {channels={}, order={}, sequence=0, status="OFFLINE", detail="等待桌面助手", session=tostring(time())..tostring(math.random(1000,9999)), lastBridge=0}
 local A=DFY
-A.version="1.18.19"
+A.version="1.18.20"
 A.ArrayMeta={}
 function A.Array(values) return setmetatable(values or {},A.ArrayMeta) end
 local types={SAY="说",YELL="喊叫",PARTY="小队",PARTY_LEADER="小队",RAID="团队",RAID_LEADER="团队",GUILD="公会",OFFICER="官员",WHISPER="悄悄话",BN_WHISPER="战网私聊",CHANNEL="频道",INSTANCE_CHAT="副本队伍",INSTANCE_CHAT_LEADER="副本队伍"}
@@ -965,6 +965,13 @@ e:SetScript("OnEvent",function(_,event,...)
  if event=="CHAT_MSG_WHISPER_INFORM" then local text,name=...;A.WhisperOutgoing(text,name);return end
  A.Chat(event,...)
 end)
+function A.GenerationProgress(p)
+ local seconds=math.floor(GetTime()-p.created)
+ if A.prepared and A.prepared.kind=="rx" then return "回复已接收，正在确认" end
+ if A.receiverActive then return "正在接收 · "..#(A.receiverBuffer or "").." 字节 · 已等 "..seconds.." 秒" end
+ if A.bridgeError and A.bridgeError~="" then return "回传待恢复 · 已等 "..seconds.." 秒；无需重连" end
+ return "等待生成或回传 · 已等 "..seconds.." 秒；可点丢弃取消"
+end
 local elapsed=0
 e:SetScript("OnUpdate",function(_,dt)
  if not A.db or A.bridgeInitError then return end; elapsed=elapsed+dt; if elapsed<0.25 then return end; elapsed=0
@@ -978,7 +985,7 @@ e:SetScript("OnUpdate",function(_,dt)
  elseif p and p.submitted and not p.confirmed and GetTime()-p.sentAt>5 and A.detail~="发送未确认，请查看聊天；不会自动重发" then A.detail="发送未确认，请查看聊天；不会自动重发"; A.Refresh()
  elseif A.lastBridge>0 and GetTime()-A.lastBridge>75 and A.status~="OFFLINE" then A.State("OFFLINE","暂未收到心跳，回到游戏前台后自动恢复") end
  if p and A.status=="GENERATING" and GetTime()-p.created>3 then
-  local detail="生成/接收中 · 已等 "..math.floor(GetTime()-p.created).." 秒；回复就绪后自动回传"
+  local detail=A.GenerationProgress(p)
   if A.detail~=detail then A.detail=detail; A.Refresh() end
  end
  if A.Publish then A.Publish() end

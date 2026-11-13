@@ -174,7 +174,7 @@ internal static class Native
     {
         for(int key=1;key<255;key++) if((GetAsyncKeyState(key)&0x8000)!=0) return false; return true;
     }
-    internal static bool CanUseBridge(Packet? p)=>p?.professionBusy!=true&&BridgeInputPolicy.Clear(BridgeInputPolicy.Extended(p),key=>(GetAsyncKeyState(key)&0x8000)!=0);
+    internal static bool CanUseBridge(Packet? p)=>p?.professionBusy!=true&&BridgeInputPolicy.Clear(p,key=>(GetAsyncKeyState(key)&0x8000)!=0);
     static bool InputClear(bool extended)=>BridgeInputPolicy.Clear(extended,key=>(GetAsyncKeyState(key)&0x8000)!=0);
     internal static bool UserIdle(int ms) { var value=new LASTINPUTINFO { size=(uint)Marshal.SizeOf<LASTINPUTINFO>() }; return GetLastInputInfo(ref value)&&unchecked((uint)Environment.TickCount-value.tick)>=(uint)ms; }
     internal static ushort[] ReceiverKeys(int key,int modifiers)
@@ -187,49 +187,25 @@ internal static class Native
         var keys=ReceiverKeys(key,modifiers);
         return keys.Select(k=>(k,false)).Concat(keys.Reverse().Select(k=>(k,true))).ToArray();
     }
-    internal static Task ReceiverChord(Config c,int key,int modifiers,bool extended=false)
+    internal static Task ReceiverChord(Config c,int key,int modifiers,bool extended=false,Packet? source=null)
     {
         var keys=ReceiverKeys(key,modifiers);
         if(extended&&(!BridgeInputPolicy.AllowedKey(key)||modifiers!=0))throw new NativeInputNotStartedException("Invalid extended key");
-        if(!IsGame(GetForegroundWindow(),c)||!InputClear(extended)) throw new NativeInputNotStartedException("Unsafe receiver key state; no native input issued");
+        if(!IsGame(GetForegroundWindow(),c)||!(source==null?InputClear(extended):CanUseBridge(source))) throw new NativeInputNotStartedException("Unsafe receiver key state; no native input issued");
         // One ordered stroke, like the already-working data-key stream. No modifier hold or blind post-key sleep.
         // Completion is verified by the dispatcher's existing pixel ACK, not a fixed delay.
         InputStrokes(ReceiverStrokePlan(key,modifiers));
         return Task.CompletedTask;
     }
-    internal static async Task ReceiverText(Config c,string text,Packet source,Func<bool> enabled)
+    internal static Task ReceiverText(Config c,string text,Packet source,Func<bool> enabled)
     {
-        if(!text.StartsWith("DFY4;",StringComparison.Ordinal)||!text.EndsWith('!')||text.Length>480||text.Any(ch=>ch<32||ch>126)) throw new InvalidDataException("Invalid envelope");
-        var slots=source.bridgeDataKeys;bool extended=BridgeInputPolicy.Extended(source);
-        if(source.bridgeRevision!=2 || (!extended || slots.Length is not (2 or 4 or 8)))throw new InvalidDataException("Flow-controlled addon required");
-        var parts=text.Split(';');int nonce=int.Parse(parts[2]);int expectedLength=0;int expectedSum=0;
-        Packet ReadSafe()
-        {
-            if(!enabled())throw new OperationCanceledException("Bridge paused");
-            var p=Read(c)?.packet;
-            if(!BridgeFlow.StateMatches(p,source,nonce))throw new InvalidOperationException("Flow-control state changed");
-            return p!;
-        }
-        foreach(string chunk in BridgeFlow.Chunks(text))
-        {
-            var before=ReadSafe();
-            if(!BridgeFlow.CanWrite(before,expectedLength,expectedSum,CanUseBridge(before)))throw new NativeInputNotStartedException("Flow-control preflight rejected");
-            var events=BridgeFlow.Strokes(chunk,slots,extended);
-            if(events.Length>64)throw new InvalidOperationException("Native input batch exceeds64 events");
-            foreach(char ch in chunk){expectedLength++;expectedSum=(expectedSum+ch*expectedLength)%65536;}
-            if(!enabled()||!IsGame(GetForegroundWindow(),c)||!InputClear(extended))throw new NativeInputNotStartedException("Input changed before native batch; no input issued");
-            InputStrokes(events);
-            Program.Log("bridge_chunk",new{source.session,nonce,bytes=chunk.Length,total=expectedLength,nativeEvents=events.Length});
-            bool final=expectedLength==text.Length,ack=false;
-            for(int i=0;i<BridgeTiming.AckPollCount;i++)
-            {
-                await Task.Delay(BridgeTiming.AckPollMs);
-                var p=ReadSafe();
-                if(BridgeFlow.Acknowledged(p,nonce,expectedLength,expectedSum,final)){ack=true;break;}
-                if(!CanUseBridge(p)||!string.IsNullOrEmpty(p.bridgeError)||(!p.receiverOpen&&!final))throw new InvalidOperationException("Flow-control chunk interrupted");
-            }
-            if(!ack)throw new TimeoutException("No verified four-byte chunk ACK");
-        }
+        return BridgeFlow.Transfer(text,source,()=>Read(c)?.packet,CanUseBridge,enabled,
+            events=>{
+                if(!enabled()||!IsGame(GetForegroundWindow(),c)||!CanUseBridge(source))
+                    throw new NativeInputNotStartedException("Input changed before native batch; no input issued");
+                InputStrokes(events);
+            },()=>Task.Delay(BridgeTiming.AckPollMs),
+            (nonce,count,total,events)=>Program.Log("bridge_chunk",new{source.session,nonce,bytes=count,total,nativeEvents=events}));
     }
     internal static Task<bool> Command(Config c, string session, string command, Func<bool> enabled, int? requestId = null) => new BridgeDispatcher(new NativeBridgePort(c,enabled)).Send(session,command,requestId);
 }
@@ -241,8 +217,8 @@ internal sealed class NativeBridgePort(Config config,Func<bool> enabled):IBridge
     public bool Enabled=>enabled();
     public bool Idle=>true; // No elapsed idle gate; actual keys/focus still verified.
     public bool KeysUp=>Native.CanUseBridge(last);
-    public Task OpenReceiver(int key,int modifiers){Program.Log("bridge_stage",new{stage="open",key,modifiers});return Native.ReceiverChord(config,key,modifiers,BridgeInputPolicy.Extended(last));}
+    public Task OpenReceiver(int key,int modifiers){Program.Log("bridge_stage",new{stage="open",key,modifiers});return Native.ReceiverChord(config,key,modifiers,BridgeInputPolicy.Extended(last),last);}
     public Task TypeReceiver(string text){Program.Log("bridge_stage",new{stage="text",length=text.Length,checksum=text[(text.LastIndexOf(';')+1)..^1]});return Native.ReceiverText(config,text,last??throw new InvalidOperationException("Missing packet"),()=>enabled());}
-    public Task ExecutePrepared(int key,int modifiers){Program.Log("bridge_stage",new{stage="execute",key,modifiers});return Native.ReceiverChord(config,key,modifiers,BridgeInputPolicy.Extended(last));}
+    public Task ExecutePrepared(int key,int modifiers){Program.Log("bridge_stage",new{stage="execute",key,modifiers});return Native.ReceiverChord(config,key,modifiers,BridgeInputPolicy.Extended(last),last);}
     public Task Delay()=>Task.Delay(BridgeTiming.AckPollMs);
 }

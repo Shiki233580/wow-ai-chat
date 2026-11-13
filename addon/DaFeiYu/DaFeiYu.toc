@@ -2,7 +2,7 @@
 ## Title: 篝火大肥鱼 AI 聊天
 ## Notes: 游戏内聊天面板与可见像素桥接
 ## Author: Local
-## Version: 1.18.19
+## Version: 1.18.20
 ## SavedVariables: DFY_DB
 Core.lua
 Activities.lua

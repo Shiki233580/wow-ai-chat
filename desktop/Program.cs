@@ -156,6 +156,7 @@ internal sealed class TrayContext : ApplicationContext
             if(c.paused){tray.Text="大肥鱼 · 已手动暂停；在托盘选择恢复";return;}
             if(connection.RecoverAutomatically(p.bindingsReady,true,Native.CanUseBridge(p),p.typing,c.paused)) Program.Log("bridge_auto_recovered",new{p.Key});
             if (p.session != session) { session = p.session; nextPing = DateTime.MinValue; job = null; }
+            if(job!=null && job.Key!=p.Key) { Program.Log("job_obsolete",new{job.Key,current=p.Key});job=null;waitReason=""; }
             string state = p.Key + ":" + p.status + ":" + p.submitted + ":" + p.confirmed + ":" + p.detail;
             if (state != lastStatus) { lastStatus = state; Program.Log("game_state", new { p.Key, p.status, p.submitted, p.confirmed, p.detail, p.channel, p.target, p.channelNumber }); }
             string whisperState=$"{p.session}:{p.whisperAuto}:{p.whisperQueued}:{p.whisperReceivedBN}:{p.sendUnconfirmed}:{p.whisperDiagnostic}";
