@@ -1,0 +1,22 @@
+# Never commit live credentials, local identity or chat history.
+/config.json
+/credentials.yaml
+/credentials.*.yaml
+!/credentials.example.yaml
+/.env
+/.env.*
+/logs/
+/verification/
+/backups/
+/reply-memory.json
+/seen-requests.json
+/.testdeps/
+**/bin/
+**/obj/
+/dist/
+*.exe
+*.pdb
+*.zip
+*.log
+.vs/
+.idea/

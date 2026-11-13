@@ -1,0 +1,22 @@
+{
+  "apiUrl": "http://127.0.0.1:3100/api/game/chat",
+  "fallbackUrl": "https://api.deepseek.com/chat/completions",
+  "model": "deepseek-chat",
+  "allowFallback": true,
+  "consoleTokenFile": "",
+  "credentialFile": "credentials.yaml",
+  "cooldownSeconds": 0,
+  "hourlyLimit": 0,
+  "keywords": [
+    "大肥鱼",
+    "鲸鱼"
+  ],
+  "hotkey": "",
+  "character": "",
+  "gameExe": "",
+  "requestTimeoutMs": 12000,
+  "pollMs": 150,
+  "paused": false,
+  "inputIdleMs": 0,
+  "personaFile": "persona-大肥鱼.txt"
+}
