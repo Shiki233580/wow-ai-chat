@@ -1,4 +1,5 @@
 $ErrorActionPreference='Stop'
+throw 'Isolated development version: installation into the game is disabled. Online1.18.20 is untouched.'
 try {
  $c=Get-Content (Join-Path $PSScriptRoot 'config.json') -Raw -Encoding UTF8|ConvertFrom-Json
  if(-not $c.gameExe -or -not (Test-Path -LiteralPath $c.gameExe -PathType Leaf)){throw 'Run setup.bat first'}

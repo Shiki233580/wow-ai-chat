@@ -19,8 +19,21 @@ internal static class Program
     [STAThread]
     static int Main(string[] args)
     {
+#if DFY_PREVIEW
+        // Preview builds must never start the live tray, probe the game or inject input.
+        if (!args.Contains("--self-test")) {
+            Console.Error.WriteLine("Isolated preview: only --self-test is permitted. Online1.18.20 is untouched.");
+            return 64;
+        }
+#endif
         ApplicationConfiguration.Initialize();
         int rootIndex = Array.IndexOf(args, "--root"); if (rootIndex >= 0 && rootIndex + 1 < args.Length) Root = Path.GetFullPath(args[rootIndex + 1]);
+#if DFY_PREVIEW
+        if (!File.Exists(Path.Combine(Root,"DEVELOPMENT.md"))) {
+            Console.Error.WriteLine("Preview tests require their isolated development root; no files written.");
+            return 64;
+        }
+#endif
         try
         {
             var config = Config.Load(Path.Combine(Root, "config.json"));

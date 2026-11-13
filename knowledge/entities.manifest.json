@@ -1,0 +1,10 @@
+{
+  "entries": 12697,
+  "sources": {
+    "01_副本总览.csv": "1e34fde69c40d9aac3b023486e95ef82d75eb5f6e5fd832dd615353ad41b6d64",
+    "04_装备物品目录.csv": "6bcc196c8dc45fd2ff839213e29f7947d02fb46a92b6b4985c10c9c70c662e7e",
+    "05_专业配方.csv": "535ad165be6130a2df69e5acd2b034bf8cf989f46e90cb76ced8f68f89b11c34",
+    "07_职业法术.csv": "a016fb2040837fd520b63636047007f25882e2cbe6ba4197581cc080e969bfa0"
+  },
+  "scope": "entity names only, no account data or factual assertions"
+}

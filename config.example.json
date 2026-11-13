@@ -18,5 +18,10 @@
   "pollMs": 150,
   "paused": false,
   "inputIdleMs": 0,
-  "personaFile": "persona-大肥鱼.txt"
+  "personaFile": "persona-大肥鱼.txt",
+  "knowledgeEnabled": false,
+  "knowledgeBaseUrl": "http://127.0.0.1:3100",
+  "knowledgeTokenFile": "",
+  "knowledgeIndexFile": "knowledge/entities.json",
+  "knowledgeTimeoutMs": 600
 }

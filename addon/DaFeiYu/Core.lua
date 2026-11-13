@@ -1,6 +1,6 @@
 DFY = {channels={}, order={}, sequence=0, status="OFFLINE", detail="等待桌面助手", session=tostring(time())..tostring(math.random(1000,9999)), lastBridge=0}
 local A=DFY
-A.version="1.18.20"
+A.version="1.18.21-dev.1"
 A.ArrayMeta={}
 function A.Array(values) return setmetatable(values or {},A.ArrayMeta) end
 local types={SAY="说",YELL="喊叫",PARTY="小队",PARTY_LEADER="小队",RAID="团队",RAID_LEADER="团队",GUILD="公会",OFFICER="官员",WHISPER="悄悄话",BN_WHISPER="战网私聊",CHANNEL="频道",INSTANCE_CHAT="副本队伍",INSTANCE_CHAT_LEADER="副本队伍"}
