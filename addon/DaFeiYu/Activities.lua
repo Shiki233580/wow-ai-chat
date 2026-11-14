@@ -60,6 +60,60 @@ local function title(id,index)
  if type(n)=="string" and n~="" then titles[id]=plain(n) end
  return titles[id] or ("任务编号"..tostring(id))
 end
+-- Capture dialog facts while they exist; never select quests or scan bag contents.
+-- Bounded session-only cache. Offered rewards are not proof of receiving them.
+local questFacts,questFactOrder={},{}
+local function excerpt(value,limit)
+ if not safe(value) or type(value)~="string" then return "" end
+ return A.Cut(plain(value):gsub("%s+"," "),limit)
+end
+local function captureQuest(id,dialog)
+ if not safe(id) or type(id)~="number" or id<=0 then return end
+ local q=questFacts[id]
+ if not q then
+  q={};questFacts[id]=q;questFactOrder[#questFactOrder+1]=id
+  if #questFactOrder>128 then questFacts[table.remove(questFactOrder,1)]=nil end
+ end
+ if dialog and call(GetQuestID)==id then
+  local name=excerpt(call(GetTitleText),40);if name~="" then titles[id]=name end
+  local description=excerpt(call(GetQuestText),90)
+  local objectives=excerpt(call(GetObjectiveText),90)
+  if description~="" then q.description=description end
+  if objectives~="" then q.objectives=objectives end
+  local offers={}
+  for _,spec in ipairs({{"reward",GetNumQuestRewards,"固定"},{"choice",GetNumQuestChoices,"候选非全得"}}) do
+   local count=call(spec[2])
+   if safe(count) and type(count)=="number" then
+    for i=1,math.min(count,3) do
+     local name,_,quantity=call(GetQuestItemInfo,spec[1],i)
+     name=excerpt(name,24)
+     if name~="" then offers[#offers+1]=spec[3]..":"..name..(safe(quantity) and type(quantity)=="number" and ("×"..quantity) or "") end
+    end
+   end
+  end
+  local money=call(GetRewardMoney)
+  if safe(money) and type(money)=="number" and money>0 then offers[#offers+1]=money.."铜" end
+  if #offers>0 then q.offers=excerpt(table.concat(offers,"、"),80) end
+ end
+ local objectives=call(C_QuestLog and C_QuestLog.GetQuestObjectives,id)
+ if safe(objectives) and type(objectives)=="table" then
+  local parts={}
+  for i=1,math.min(#objectives,4) do
+   local row=objectives[i]
+   if safe(row) and type(row)=="table" then local text=excerpt(row.text,55);if text~="" then parts[#parts+1]=text end end
+  end
+  if #parts>0 then q.objectives=excerpt(table.concat(parts,"、"),90) end
+ end
+end
+local function questFact(q)
+ local fact=A.Cut(q.fact,180)
+ local context=q.questID and questFacts[q.questID]
+ if not context then return fact end
+ if context.objectives then fact=fact.."；目标资料："..context.objectives end
+ if context.description then fact=fact.."；任务说明："..A.Cut(context.description,65) end
+ if context.offers then fact=fact.."；展示奖励（非领取凭据）："..A.Cut(context.offers,65) end
+ return A.Cut(fact,420)
+end
 function A.ActivityInit()
  local d=A.db; if d.activityAuto==nil then d.activityAuto=false end
  d.activities=d.activities or {}; for k in pairs(labels) do if d.activities[k]==nil then d.activities[k]=true end end
@@ -98,7 +152,7 @@ function A.QueueActivity(kind,key,fact,itemID,quantity,notice,details)
  if seen[key] then return end
  local route=A.SignalChannel(); if not route then note("事件未排入：所选频道不可用"); return end
  ensure(route); remember(key)
- queue[#queue+1]={kind=kind,key=key,fact=fact,route=route,itemID=itemID,quantity=quantity}
+ queue[#queue+1]={kind=kind,key=key,fact=fact,route=route,itemID=itemID,quantity=quantity,questID=details and details.questID}
  addNotice(queue[#queue],notice,details)
  batchChangedAt=GetTime();note("合并事件中 · "..#queue.." 项，操作结束后说一句")
 end
@@ -121,14 +175,20 @@ function A.PumpActivities()
  queue={}
  if #batch==0 then note("已取消旧事件：开关或回复目标已变化");return end
  local fact,kind
- if #batch==1 then fact=batch[1].fact;kind=batch[1].kind
+ if #batch==1 then fact=questFact(batch[1]);kind=batch[1].kind
  else
   local parts={}
   for _,k in ipairs({"accept","complete","reward","equipment"}) do if counts[k] then parts[#parts+1]=labels[k]..counts[k].."项" end end
-  fact="连续操作合并："..table.concat(parts,"、").."。只总结一句心情，不逐项报数、不逐条发言。最后一项事实："..A.Cut(batch[#batch].fact,65)
+  local representative,score=batch[#batch],-1
+  for _,q in ipairs(batch) do
+   local context=q.questID and questFacts[q.questID]
+   local value=(q.kind=="reward" and 100 or 0)+(context and context.objectives and 40 or 0)+(context and context.description and 20 or 0)
+   if value>=score then representative=q;score=value end
+  end
+  fact="连续操作合并："..table.concat(parts,"、").."。合为一句吐槽，不逐项报数。本批代表事实："..questFact(representative)
   kind="batch"
  end
- A.Generate(route,true,A.Cut("已发生的本人游戏事件："..fact,160),"event",kind)
+ A.Generate(route,true,A.Cut("已发生的本人游戏事件："..fact,460),"event",kind)
  if A.pending and A.pending.mode=="event" and A.status=="GENERATING" then
   -- Native facts remain in the prompt; spoken output is only the persona sentence.
   A.pending.eventReply="";A.pending.eventFlavor=true;A.pending.activityKinds=kinds;A.pending.activityCount=#batch;A.pending.activityItems=itemIDs
@@ -163,7 +223,8 @@ function A.ActivityScan(seed)
    local q=quests[id]
    if not q then q={cycle=0,complete=complete,active=true};quests[id]=q
    elseif not seed and not q.complete and complete then
-    A.QueueActivity("complete","complete:"..id..":"..q.cycle,"任务目标已完成，尚未交付："..title(id,i),nil,nil,label(title(id,i)).."已完成！")
+    captureQuest(id,false)
+    A.QueueActivity("complete","complete:"..id..":"..q.cycle,"任务目标已完成，尚未交付："..title(id,i),nil,nil,label(title(id,i)).."已完成！",{questID=id})
    end
    q.complete=complete; q.active=true
   end
@@ -267,6 +328,9 @@ local function sourceItem(link,key,quantity,source)
 end
 function A.ActivityEvent(event,...)
  if not A.db then return end
+ if event=="QUEST_DETAIL" or event=="QUEST_PROGRESS" or event=="QUEST_COMPLETE" then
+  captureQuest(call(GetQuestID),true);return
+ end
  if event=="TRADE_SKILL_SHOW" or event=="CRAFT_SHOW" then
   professionOpen[event=="TRADE_SKILL_SHOW" and "trade" or "craft"]=true
   A.queuedSignal=nil
@@ -286,7 +350,8 @@ function A.ActivityEvent(event,...)
   local a,b=...;local id=type(b)=="number" and b or a;if not safe(id) or type(id)~="number" or id<=0 then return end
   local q=quests[id] or {cycle=0}; if q.acceptNotified and q.active and not q.turned then return end
   q.cycle=q.cycle+1;q.active=true;q.turned=false;q.complete=false;q.acceptNotified=true;quests[id]=q
-  A.QueueActivity("accept","accept:"..id..":"..q.cycle,"我已接取任务："..title(id,type(b)=="number" and a or nil),nil,nil,"已接取"..label(title(id)).."！");return
+  captureQuest(id,true)
+  A.QueueActivity("accept","accept:"..id..":"..q.cycle,"我已接取任务："..title(id,type(b)=="number" and a or nil),nil,nil,"已接取"..label(title(id)).."！",{questID=id});return
  end
  if event=="QUEST_REMOVED" then local id=...;if safe(id) and quests[id] then quests[id].active=false;quests[id].acceptNotified=false end;return end
  if event=="QUEST_TURNED_IN" or event=="QUEST_LOOT_RECEIVED" then
@@ -298,12 +363,12 @@ function A.ActivityEvent(event,...)
    local fact="任务已交付："..title(id)
    if safe(b) and type(b)=="number" and b>0 then fact=fact.."，实际获得经验："..b end
    if safe(c) and type(c)=="number" and c>0 then fact=fact.."，实际获得金钱："..c.."铜" end
-   A.QueueActivity("reward",key,fact,nil,nil,label(title(id)).."已交付！",{rewardTitle=title(id),rewardTurned=true})
+   A.QueueActivity("reward",key,fact,nil,nil,label(title(id)).."已交付！",{rewardTitle=title(id),rewardTurned=true,questID=id})
   elseif safe(b) and type(b)=="string" then
    local item=tonumber(b:match("item:(%d+)"));local quantity=safe(c) and tonumber(c) or 1;quantity=quantity or 1
    if enabled("reward") then
     -- One quest reward fact already covers its equipment: never enqueue twice.
-    A.QueueActivity("reward",key,"任务已领取物品奖励："..title(id).."，物品："..plain(b).."，数量："..quantity,nil,nil,"获得"..label(b).."！",{rewardTitle=title(id),rewardItem=itemName(b)})
+    A.QueueActivity("reward",key,"任务已领取物品奖励："..title(id).."，物品："..plain(b).."，数量："..quantity,nil,nil,"获得"..label(b).."！",{rewardTitle=title(id),rewardItem=itemName(b),questID=id})
    elseif item then
     sourceItem(b,key..":item:"..item,quantity,"任务奖励获得装备："..title(id))
    end
@@ -329,7 +394,7 @@ function A.ActivityEvent(event,...)
  end
 end
 local f=CreateFrame("Frame");A.activityFrame=f;A.activitySupport={}
-for _,event in ipairs({"TRADE_SKILL_SHOW","TRADE_SKILL_CLOSE","CRAFT_SHOW","CRAFT_CLOSE","PLAYER_ENTERING_WORLD","QUEST_ACCEPTED","QUEST_LOG_UPDATE","QUEST_REMOVED","QUEST_TURNED_IN","QUEST_LOOT_RECEIVED","CHAT_MSG_LOOT","GET_ITEM_INFO_RECEIVED","ITEM_DATA_LOAD_RESULT"}) do local ok,result=pcall(f.RegisterEvent,f,event);A.activitySupport[event]=ok and result~=false end
+for _,event in ipairs({"TRADE_SKILL_SHOW","TRADE_SKILL_CLOSE","CRAFT_SHOW","CRAFT_CLOSE","PLAYER_ENTERING_WORLD","QUEST_DETAIL","QUEST_PROGRESS","QUEST_COMPLETE","QUEST_ACCEPTED","QUEST_LOG_UPDATE","QUEST_REMOVED","QUEST_TURNED_IN","QUEST_LOOT_RECEIVED","CHAT_MSG_LOOT","GET_ITEM_INFO_RECEIVED","ITEM_DATA_LOAD_RESULT"}) do local ok,result=pcall(f.RegisterEvent,f,event);A.activitySupport[event]=ok and result~=false end
 f:SetScript("OnEvent",function(_,event,...) local ok=pcall(A.ActivityEvent,event,...);if not ok then note("事件数据不可读，已跳过") end end)
 function A.ToggleActivityPanel()
  if not A.activityPanel then

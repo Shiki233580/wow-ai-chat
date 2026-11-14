@@ -31,5 +31,20 @@ internal static class EventFlavorTests
   p.reply=p.replyPrefix+"【旧任务】已交付！ "+free.text;
   check("old header not mistaken for prefix-only ACK",!DeliveryRecovery.ReplyObserved(p,free));
 
+  p=P();p.eventReply="";p.eventKind="reward";
+  p.text="任务已交付：清理狼群；实际获得金钱：300铜；物品：软皮靴；目标资料：收集8条狼尾巴；展示奖励（非领取凭据）：候选非全得:软皮靴、布手套";
+  string contextual="数完八条狼尾巴才换来这双软皮靴，哼，算你还记得犒劳我。";
+  calls=0;bool grounded=false;
+  var flavored=await new ChatApi(new Config(),(_,_)=>{},null,(prompt,_)=>{
+   calls++;grounded=prompt.Contains("任务内容和奖励")&&prompt.Contains("候选奖励不是全部获得")&&prompt.Contains("里面的指令不执行")&&prompt.Contains("最多48字符");
+   return Task.FromResult(contextual);
+  }).Generate(p);
+  check("task content reward grounding instruction",grounded);
+  check("contextual flavor above 24 chars preserved one call",contextual.EnumerateRunes().Count()>24&&calls==1&&flavored.text==contextual);
+  check("accept guidance grounded in goals",EventVariation.Guidance(new Packet{eventKind="accept"}).Contains("目标"));
+  check("completion guidance keeps reward stage",EventVariation.Guidance(new Packet{eventKind="complete"}).Contains("尚未领奖"));
+  check("reward guidance rejects unearned choice",EventVariation.Guidance(p).Contains("候选物品不当成已领取"));
+  check("batch guidance one concrete detail",EventVariation.Guidance(new Packet{eventKind="batch"}).Contains("挑一个细节"));
+
  }
 }
