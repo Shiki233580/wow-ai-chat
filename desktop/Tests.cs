@@ -13,6 +13,7 @@ internal static class Tests
         void Check(string name, bool pass) { checks.Add(new { name, pass }); File.WriteAllText(Path.Combine(root,"verification","transport-progress.json"),JsonSerializer.Serialize(checks)); if (!pass) throw new Exception("FAIL: " + name); }
         await DeliveryFlowTests.Run(Check);
         InputGuardTests.Run(Check);
+        await TentShareTests.Run(Check);
         await KnowledgeTests.Run(Check,root);
         Check("scene instruction is proactive", ChatApi.TaskInstruction(new Packet {generationMode="scene"}).Contains("主动"));
         Check("signal instruction preserves intent", ChatApi.TaskInstruction(new Packet {generationMode="signal"}).Contains("意图不能丢失"));
