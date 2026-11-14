@@ -201,6 +201,12 @@ function A.Init()
  if d.waterThanksAuto==nil then d.waterThanksAuto=true end
  if d.uiMode==nil then d.uiMode="chat" end
  if d.selected==nil then d.selected={} end
+ -- Each login/reload starts on SAY; later UI refreshes keep the user's choice.
+ if not A.channels.SAY then
+  A.channels.SAY={key="SAY",type="SAY",name=types.SAY,messages={}}
+  A.order[#A.order+1]="SAY"
+ end
+ d.selected.SAY=true; d.targetKey="SAY"; A.current="SAY"
  if d.cooldownPolicy~=2 then d.cooldown=0; d.cooldownPolicy=2 end
  if d.hourlyPolicy~=1 then d.hourlyLimit=0; d.hourlyPolicy=1 end
  d.cooldown=d.cooldown or 0; d.hourlyLimit=d.hourlyLimit or 0; d.keywords=d.keywords or {"大肥鱼","鲸鱼"}; d.sentTimes=d.sentTimes or {}
