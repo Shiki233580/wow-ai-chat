@@ -51,7 +51,7 @@ internal static class Program
                 var result = new ChatApi(config, Log).Generate(p).GetAwaiter().GetResult();
                 Directory.CreateDirectory(Path.Combine(Root, "verification")); File.WriteAllText(Path.Combine(Root, "verification", "api-test.json"), JsonSerializer.Serialize(result)); return 0;
             }
-            if (args.Contains("--bridge-smoke")) return BridgeSmoke.Run(config,Root).GetAwaiter().GetResult();
+            if (args.Contains("--bridge-smoke")) {using var guard=new NativeInputGuard();Native.InputGuard=guard;return BridgeSmoke.Run(config,Root).GetAwaiter().GetResult();}
             if (args.Contains("--probe"))
             {
                 Directory.CreateDirectory(Path.Combine(Root, "verification"));
@@ -68,6 +68,7 @@ internal static class Program
 
 internal sealed class TrayContext : ApplicationContext
 {
+    readonly NativeInputGuard inputGuard;
     readonly Config c;
     readonly NotifyIcon tray;
     readonly System.Windows.Forms.Timer timer = new();
@@ -91,6 +92,7 @@ internal sealed class TrayContext : ApplicationContext
     }
     internal TrayContext(Config config)
     {
+        inputGuard=new NativeInputGuard();Native.InputGuard=inputGuard;
         c = config; api = new ChatApi(c, Program.Log, Path.Combine(Program.Root,"reply-memory.json"));
         seenPath = Path.Combine(Program.Root, "seen-requests.json");
         seen = File.Exists(seenPath) ? JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(seenPath)) ?? [] : [];
@@ -105,7 +107,7 @@ internal sealed class TrayContext : ApplicationContext
         tray.ContextMenuStrip = menu;
         // No user-facing/global shortcut; generate via existing buttons only.
         timer.Interval = c.pollMs; timer.Tick += async (_, _) => await Tick(); timer.Start();
-        Program.Log("startup", new { c.character, hotkeyRegistered=false, keyboardTransport="unmodified_only", c.paused });
+        Program.Log("startup", new { c.character, hotkeyRegistered=false, keyboardTransport="unmodified_only", inputGuard=true, c.paused });
     }
     async Task<bool> Command(Packet p, string text, bool matchRequest = false)
     {
@@ -208,5 +210,5 @@ internal sealed class TrayContext : ApplicationContext
         }
         finally { timer.Interval=BridgeTiming.PollInterval(c.pollMs,deliveryWaiting); busy = false; }
     }
-    protected override void ExitThreadCore() { shutdown = true; timer.Stop(); timer.Dispose(); tray.Visible = false; tray.Dispose(); base.ExitThreadCore(); }
+    protected override void ExitThreadCore() { shutdown = true; timer.Stop(); timer.Dispose();inputGuard.Dispose();Native.InputGuard=null; tray.Visible = false; tray.Dispose(); base.ExitThreadCore(); }
 }

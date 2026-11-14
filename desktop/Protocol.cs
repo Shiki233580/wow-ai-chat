@@ -10,6 +10,8 @@ public sealed record ChatLine(string speaker, string text);
 public sealed record BridgeKey(int key,int mods);
 public sealed class Packet
 {
+    public int inputGuardVersion {get;set;}
+    public double inputSample {get;set;}
     public WorldState? worldState { get; set; }
     public string bridgeTransport { get; set; } = "";
     public BridgeKey[] bridgeDataKeys { get; set; } = [];
@@ -116,6 +118,7 @@ public static class PixelCodec
 
 internal static class Native
 {
+    internal static NativeInputGuard? InputGuard;
     internal static string LastReadDiagnostic = "not_sampled";
     internal static string? LastDecodedPlayer;
     [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
@@ -138,6 +141,7 @@ internal static class Native
     }
     internal static (IntPtr window, Packet packet)? Read(Config c, string? saveImage = null)
     {
+        InputGuard?.Invalidate(); // A failed/torn/covered read must not leave stale permission.
         LastDecodedPlayer = null;
         var h = GetForegroundWindow(); if (!IsGame(h, c)) { LastReadDiagnostic="foreground_not_expected_game"; return null; }
         if (!GetClientRect(h, out var r) || r.right < PixelCodec.FontWidth+16 || r.bottom < PixelCodec.Height+16) { LastReadDiagnostic="client_rect_invalid"; return null; }
@@ -146,7 +150,7 @@ internal static class Native
         using (var g = Graphics.FromImage(b)) g.CopyFromScreen(p.x, p.y, 0, 0, b.Size, CopyPixelOperation.SourceCopy);
         if (saveImage != null) b.Save(saveImage, ImageFormat.Png);
         var data = PixelCodec.Decode(b); if (data == null) { LastReadDiagnostic="pixel_calibration_or_checksum_failed"; return null; }
-        try { var packet = JsonSerializer.Deserialize<Packet>(data); LastDecodedPlayer=packet?.player; if (packet == null || packet.player != c.character) { LastReadDiagnostic="character_mismatch"; return null; } LastReadDiagnostic="decoded"; return (h, packet); } catch { LastReadDiagnostic="packet_json_invalid"; return null; }
+        try { var packet = JsonSerializer.Deserialize<Packet>(data); LastDecodedPlayer=packet?.player; if (packet == null || packet.player != c.character) { LastReadDiagnostic="character_mismatch"; return null; } InputGuard?.Observe(packet,h);LastReadDiagnostic="decoded"; return (h, packet); } catch { LastReadDiagnostic="packet_json_invalid"; return null; }
     }
     [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint mapType);
     static INPUT Key(ushort vk, bool up = false)
@@ -157,10 +161,10 @@ internal static class Native
         {
             uint scan = MapVirtualKey(vk, 0);
             if (scan == 0 || scan > 255) throw new InvalidOperationException("Unsupported extended function-key scan code");
-            return new() { type=1, data=new UNION { key=new KEYBDINPUT { scan=(ushort)scan, flags=8u|(up?2u:0u) } } };
+            return new() { type=1, data=new UNION { key=new KEYBDINPUT { scan=(ushort)scan, flags=8u|(up?2u:0u),extra=NativeInputGuard.Tag } } };
         }
         uint extended=vk is 33 or 34 or 35 or 36 or 45 or 46 or 111 ? 1u : 0u;
-        return new() { type=1, data=new UNION { key=new KEYBDINPUT { vk=vk, flags=extended|(up?2u:0u) } } };
+        return new() { type=1, data=new UNION { key=new KEYBDINPUT { vk=vk, flags=extended|(up?2u:0u),extra=NativeInputGuard.Tag } } };
     }
     static void InputStrokes((ushort key,bool up)[] plan)
     {
@@ -174,7 +178,7 @@ internal static class Native
     {
         for(int key=1;key<255;key++) if((GetAsyncKeyState(key)&0x8000)!=0) return false; return true;
     }
-    internal static bool CanUseBridge(Packet? p)=>p?.professionBusy!=true&&BridgeInputPolicy.Clear(p,key=>(GetAsyncKeyState(key)&0x8000)!=0);
+    internal static bool CanUseBridge(Packet? p)=>InputGuard?.Clear==true&&p?.professionBusy!=true&&BridgeInputPolicy.Clear(p,key=>(GetAsyncKeyState(key)&0x8000)!=0);
     static bool InputClear(bool extended)=>BridgeInputPolicy.Clear(extended,key=>(GetAsyncKeyState(key)&0x8000)!=0);
     internal static bool UserIdle(int ms) { var value=new LASTINPUTINFO { size=(uint)Marshal.SizeOf<LASTINPUTINFO>() }; return GetLastInputInfo(ref value)&&unchecked((uint)Environment.TickCount-value.tick)>=(uint)ms; }
     internal static ushort[] ReceiverKeys(int key,int modifiers)
@@ -191,7 +195,7 @@ internal static class Native
     {
         var keys=ReceiverKeys(key,modifiers);
         if(extended&&(!BridgeInputPolicy.AllowedKey(key)||modifiers!=0))throw new NativeInputNotStartedException("Invalid extended key");
-        if(!IsGame(GetForegroundWindow(),c)||!(source==null?InputClear(extended):CanUseBridge(source))) throw new NativeInputNotStartedException("Unsafe receiver key state; no native input issued");
+        if(InputGuard?.Clear!=true||!IsGame(GetForegroundWindow(),c)||!(source==null?InputClear(extended):CanUseBridge(source))) throw new NativeInputNotStartedException("Unsafe receiver key state; no native input issued");
         // One ordered stroke, like the already-working data-key stream. No modifier hold or blind post-key sleep.
         // Completion is verified by the dispatcher's existing pixel ACK, not a fixed delay.
         InputStrokes(ReceiverStrokePlan(key,modifiers));

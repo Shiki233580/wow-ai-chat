@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>WhaleChat</AssemblyName>
-    <Version>1.18.21-dev.1</Version>
+    <Version>1.18.22-dev.1</Version>
     <DefineConstants>$(DefineConstants);DFY_PREVIEW</DefineConstants>
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
