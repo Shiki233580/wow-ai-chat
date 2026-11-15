@@ -67,16 +67,19 @@ internal sealed class BridgeDispatcher(IBridgePort port)
     void Enabled() { if(!port.Enabled) throw new OperationCanceledException("Bridge paused or closing"); }
     async Task<Packet> Wait(string session,int? request,Func<Packet,bool> predicate,string label,int? openingAfter=null)
     {
+        long started=Environment.TickCount64;
         for(int i=0;i<BridgeTiming.AckPollCount;i++) {
             Enabled(); var p=port.Read();
+            if(BridgeTiming.DeadlineExpired(started,Environment.TickCount64))break;
             if(p==null) { await port.Delay(); continue; } // Torn/occluded frame: read-only retry, never inject blindly.
             if(!Same(p,session,request)) throw new InvalidOperationException("Bridge state lost: "+label);
             if(!string.IsNullOrEmpty(p.bridgeError) && !(openingAfter.HasValue && p.receiverNonce<=openingAfter.Value))
                 throw new InvalidOperationException("Addon receiver rejected at "+label+": "+p.bridgeError+" ["+p.bridgeRxDiagnostic+"]");
             if(predicate(p)) return p; // Read-only ACK may complete even if input resumes.
             if(p.professionBusy) throw new InvalidOperationException("Profession opened during bridge: "+label);
-            if(!port.KeysUp) throw new InvalidOperationException("Communication modifier/function key interrupted: "+label);
             if(p.typing) throw new InvalidOperationException("Unrelated input focus: "+label);
+            // A short key hold/input fence is read-only waiting, not a reason to
+            // discard an already prepared, checksum-verified payload.
             await port.Delay();
         }
         throw new TimeoutException("No verified addon acknowledgement: "+label);
@@ -95,12 +98,10 @@ internal sealed class BridgeDispatcher(IBridgePort port)
         var ready=await Wait(session,request,p=>p.receiverOpen&&(alreadyOpen?p.receiverNonce==initialNonce:p.receiverNonce>initialNonce),"open_receiver",alreadyOpen?null:initialNonce);
         int nonce=ready.receiverNonce;
         var envelope=BridgeEnvelope.Create(session,nonce,command);
-        Enabled();var check=port.Read();
-        if(check==null||check.professionBusy||check.typing||!Same(check,session,request)||!check.receiverOpen||check.receiverNonce!=nonce||!port.KeysUp) throw new InvalidOperationException("Key-stream state or input changed before data");
+        await Wait(session,request,p=>!p.typing&&!p.professionBusy&&p.receiverOpen&&p.receiverNonce==nonce&&port.KeysUp,"before_data");
         await port.TypeReceiver(envelope.text);
         await Wait(session,request,p=>!p.typing&&p.bridgeReadyNonce==nonce&&p.bridgeReadyChecksum==envelope.checksum,"prepare_payload");
-        Enabled();check=port.Read();
-        if(check==null||check.professionBusy||!Same(check,session,request)||check.typing||check.bridgeReadyNonce!=nonce||check.bridgeReadyChecksum!=envelope.checksum||!port.KeysUp) throw new InvalidOperationException("Prepared payload changed; execute refused");
+        await Wait(session,request,p=>!p.typing&&!p.professionBusy&&p.receiverNonce==nonce&&p.bridgeReadyNonce==nonce&&p.bridgeReadyChecksum==envelope.checksum&&port.KeysUp,"before_execute");
         executionStarted=true; // Conservative: a native call can partially succeed.
         await port.ExecutePrepared(executeKey,executeMods);
         // 'generate' may intentionally increment requestId, so only session/nonce remain fixed for its ACK.
@@ -113,6 +114,7 @@ internal sealed class BridgeDispatcher(IBridgePort port)
 internal static class BridgeTiming
 {
     internal const int AckPollMs=20, AckPollCount=160;
+    internal static bool DeadlineExpired(long started,long now)=>now-started>=AckPollMs*AckPollCount;
     internal static int PollInterval(int configured,bool delivering)=>delivering?Math.Min(configured,50):configured;
 }
 

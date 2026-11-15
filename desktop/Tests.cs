@@ -12,8 +12,10 @@ internal static class Tests
         Directory.CreateDirectory(Path.Combine(root, "verification"));
         void Check(string name, bool pass) { checks.Add(new { name, pass }); File.WriteAllText(Path.Combine(root,"verification","transport-progress.json"),JsonSerializer.Serialize(checks)); if (!pass) throw new Exception("FAIL: " + name); }
         await DeliveryFlowTests.Run(Check);
+        await BridgeRecoveryTests.Run(Check);
         InputGuardTests.Run(Check);
         await TentShareTests.Run(Check);
+        await ContextIsolationTests.Run(Check);
         await KnowledgeTests.Run(Check,root);
         Check("scene instruction is proactive", ChatApi.TaskInstruction(new Packet {generationMode="scene"}).Contains("主动"));
         Check("signal instruction preserves intent", ChatApi.TaskInstruction(new Packet {generationMode="signal"}).Contains("意图不能丢失"));
@@ -65,7 +67,7 @@ internal static class Tests
         try {
             var ec=new Config{character="离线测试",requestTimeoutMs=1200};var ep=new Packet{generationMode="event",eventKind="accept",channel="SAY",text="我已接取任务：测试任务"};
             string repeat="测试任务？接了，这活儿不省心。",novel="行吧，谁让我闲不住呢。";
-            void Seed(){File.Delete(repeatFile);new VoiceMemory(repeatFile).Add("离线测试\nSAY\n0\n",repeat,0);}
+            void Seed(){File.Delete(repeatFile);new VoiceMemory(repeatFile).Add(ChatApi.MemoryScope(ec,ep),repeat,0);}
             Seed();int calls=0;bool deadlineSeen=false;
             var er=await new ChatApi(ec,(_,_)=>{},repeatFile,(prompt,ct)=>{deadlineSeen=ct.CanBeCanceled;return Task.FromResult(++calls==1?repeat:novel);}).Generate(ep);
             Check("event repeated API draft rewritten exactly once",calls==2&&er.text==novel&&deadlineSeen);

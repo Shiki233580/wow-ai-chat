@@ -8,3 +8,4 @@ Core.lua
 Activities.lua
 Bridge.lua
 Panel.lua
+NeedStats.lua

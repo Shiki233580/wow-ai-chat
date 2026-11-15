@@ -7,6 +7,7 @@ internal sealed class InputGuardState
  internal const int SettleMs=350;
  string session="";double sample,barrier;long activityAt,observedAt;bool allowed;
  readonly HashSet<int> ownDown=[];
+ internal long Suppressed {get;private set;}
  internal void Activity(long now){activityAt=now;barrier=sample;allowed=false;}
  internal void Invalidate(){allowed=false;}
  internal void Observe(Packet p,long now)
@@ -21,7 +22,7 @@ internal sealed class InputGuardState
  {
   // A key-up is passed only for a down we actually allowed; never release user keys.
   if(up)return ownDown.Remove(key);
-  if(!correctWindow||!Clear(now))return false;
+  if(!correctWindow||!Clear(now)){Suppressed++;return false;}
   ownDown.Add(key);return true;
  }
  internal static bool KeyboardCanFocus(int key)=>key is not (65 or 68 or 69 or 81 or 83 or 87 or 32 or 37 or 38 or 39 or 40);
@@ -80,5 +81,6 @@ internal sealed class NativeInputGuard:IDisposable
  internal void Observe(Packet p,IntPtr window){lock(gate){target=window;state.Observe(p,Environment.TickCount64);}}
  internal void Invalidate(){lock(gate)state.Invalidate();}
  internal bool Clear {get{lock(gate)return ready&&state.Clear(Environment.TickCount64);}}
+ internal long Suppressed {get{lock(gate)return state.Suppressed;}}
  public void Dispose(){lock(gate)state.Invalidate();if(threadId!=0)PostThreadMessage(threadId,0x12,UIntPtr.Zero,IntPtr.Zero);thread.Join(1000);}
 }

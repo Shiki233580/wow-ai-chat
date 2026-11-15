@@ -2,22 +2,23 @@ namespace WhaleChat;
 
 internal static class BridgeFlow
 {
+    internal static int MaxChunkChars(int alphabetSize)=>alphabetSize switch {2=>4,4=>8,8=>10,_=>throw new InvalidDataException("Invalid alphabet size")};
     internal static bool StateMatches(Packet? p,Packet source,int nonce)=>p!=null&&p.session==source.session&&p.requestId==source.requestId&&p.bridgeRevision==2&&p.receiverNonce==nonce&&!p.typing&&!p.professionBusy&&p.bindingsReady&&p.bridgeTransport==source.bridgeTransport&&p.bridgeDataKeys.SequenceEqual(source.bridgeDataKeys)&&p.bridgeOpenKey==source.bridgeOpenKey&&p.bridgeExecuteKey==source.bridgeExecuteKey&&p.bridgeOpenMods==source.bridgeOpenMods&&p.bridgeExecuteMods==source.bridgeExecuteMods;
     internal static bool CanWrite(Packet p,int length,int checksum,bool keysClear)=>p.receiverOpen&&p.receiverLength==length&&p.receiverProgressChecksum==checksum&&keysClear;
     internal static (ushort key,bool up)[] Strokes(string chunk,BridgeKey[] slots,bool extended)
     {
-        if(chunk.Length is <1 or >4)throw new InvalidDataException("Chunk must contain1-4 ASCII bytes");
         if(chunk.Any(c=>c<32||c>126)|| (!extended||slots.Length is not (2 or 4 or 8)))throw new InvalidDataException("Invalid chunk alphabet");
+        if(chunk.Length<1||chunk.Length>MaxChunkChars(slots.Length))throw new InvalidDataException("Chunk exceeds 64 native events");
         return BridgeInputPolicy.Symbols(chunk,extended,slots.Length).SelectMany(i=>Native.ReceiverStrokePlan(slots[i].key,slots[i].mods)).ToArray();
     }
-    internal static IEnumerable<string> Chunks(string text)
-    { for(int i=0;i<text.Length;i+=4)yield return text.Substring(i,Math.Min(4,text.Length-i)); }
+    internal static IEnumerable<string> Chunks(string text,int alphabetSize=2)
+    { int size=MaxChunkChars(alphabetSize);for(int i=0;i<text.Length;i+=size)yield return text.Substring(i,Math.Min(size,text.Length-i)); }
     // Keep the verified cursor across brief key holds and torn pixel frames.
     // Waiting is read-only. A changed request/session/map or invalid ACK aborts;
     // the next dispatcher attempt explicitly resets the receiver before retrying.
     internal static async Task Transfer(string text,Packet source,Func<Packet?> read,
         Func<Packet,bool> keysClear,Func<bool> enabled,Action<(ushort key,bool up)[]> write,
-        Func<Task> delay,Action<int,int,int,int>? progress=null)
+        Func<Task> delay,Action<int,int,int,int>? progress=null,Func<bool>? inputInterrupted=null)
     {
         if(!text.StartsWith("DFY4;",StringComparison.Ordinal)||!text.EndsWith('!')||text.Length>480||text.Any(ch=>ch<32||ch>126))
             throw new InvalidDataException("Invalid envelope");
@@ -25,9 +26,12 @@ internal static class BridgeFlow
         int nonce=int.Parse(text.Split(';')[2]),length=0,sum=0;
         async Task WaitFor(Func<Packet,bool> predicate,string stage)
         {
+            long started=Environment.TickCount64;
             for(int i=0;i<BridgeTiming.AckPollCount;i++) {
                 if(!enabled())throw new OperationCanceledException("Bridge paused");
+                if(inputInterrupted?.Invoke()==true)throw new InvalidOperationException("Input guard suppressed queued strokes; reset partial stream before retry");
                 var p=read();
+                if(BridgeTiming.DeadlineExpired(started,Environment.TickCount64))break;
                 if(p!=null) {
                     if(!StateMatches(p,source,nonce))throw new InvalidOperationException("Flow-control state changed: "+stage);
                     if(!string.IsNullOrEmpty(p.bridgeError))throw new InvalidOperationException("Receiver rejected: "+p.bridgeError);
@@ -39,7 +43,7 @@ internal static class BridgeFlow
             }
             throw new TimeoutException("No verified flow-control progress: "+stage);
         }
-        foreach(string chunk in Chunks(text)) {
+        foreach(string chunk in Chunks(text,source.bridgeDataKeys.Length)) {
             await WaitFor(p=>CanWrite(p,length,sum,keysClear(p)),"before_chunk");
             var strokes=Strokes(chunk,source.bridgeDataKeys,true);
             if(!enabled())throw new OperationCanceledException("Bridge paused");

@@ -57,13 +57,13 @@ internal static class DeliveryFlowTests
         string wire=BridgeEnvelope.Create("12345",42,"rx 12345 2 5L2g5aW9").text;
         foreach(string scenario in new[]{"normal","pixels","held","both"}) {
             var port=new FlowPort{scenario=scenario};await port.Run(wire);
-            check("delivery resumes exact bytes once after "+scenario,port.received==wire&&port.writes==BridgeFlow.Chunks(wire).Count());
+            check("delivery resumes exact bytes once after "+scenario,port.received==wire&&port.writes==BridgeFlow.Chunks(wire,4).Count());
             check("delivery injected no bytes during protected wait "+scenario,scenario=="normal"||port.waits>=4);
         }
         foreach(string scenario in new[]{"session","request","typing","profession","binding","corrupt","nonce","expired","pause","permanent_pixels","permanent_held"}) {
             var port=new FlowPort{scenario=scenario};bool rejected=false;
             try{await port.Run(wire);}catch(Exception e) when(e is InvalidOperationException or OperationCanceledException or TimeoutException){rejected=true;}
-            check("delivery fails closed before another batch: "+scenario,rejected&&port.writes==2&&port.received==wire[..8]&&port.waits<=BridgeTiming.AckPollCount);
+            check("delivery fails closed before another batch: "+scenario,rejected&&port.writes==2&&port.received==wire[..16]&&port.waits<=BridgeTiming.AckPollCount);
         }
         foreach(string scenario in new[]{"stale_error","torn_open"}) {
             var p=new OpenPort{scenario=scenario};bool ok=await new BridgeDispatcher(p).Send("12345","rx 12345 2 5L2g5aW9",2);

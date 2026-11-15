@@ -179,6 +179,7 @@ internal static class Native
         for(int key=1;key<255;key++) if((GetAsyncKeyState(key)&0x8000)!=0) return false; return true;
     }
     internal static bool CanUseBridge(Packet? p)=>InputGuard?.Clear==true&&p?.professionBusy!=true&&BridgeInputPolicy.Clear(p,key=>(GetAsyncKeyState(key)&0x8000)!=0);
+    internal static string BridgeWaitReason(Packet p)=>p.typing?"input_box_focused":InputGuard?.Clear!=true?"input_transition_guard":"bridge_modifier_or_reserved_key_held";
     static bool InputClear(bool extended)=>BridgeInputPolicy.Clear(extended,key=>(GetAsyncKeyState(key)&0x8000)!=0);
     internal static bool UserIdle(int ms) { var value=new LASTINPUTINFO { size=(uint)Marshal.SizeOf<LASTINPUTINFO>() }; return GetLastInputInfo(ref value)&&unchecked((uint)Environment.TickCount-value.tick)>=(uint)ms; }
     internal static ushort[] ReceiverKeys(int key,int modifiers)
@@ -203,13 +204,15 @@ internal static class Native
     }
     internal static Task ReceiverText(Config c,string text,Packet source,Func<bool> enabled)
     {
+        long suppressed=InputGuard?.Suppressed??0;
         return BridgeFlow.Transfer(text,source,()=>Read(c)?.packet,CanUseBridge,enabled,
             events=>{
                 if(!enabled()||!IsGame(GetForegroundWindow(),c)||!CanUseBridge(source))
                     throw new NativeInputNotStartedException("Input changed before native batch; no input issued");
                 InputStrokes(events);
             },()=>Task.Delay(BridgeTiming.AckPollMs),
-            (nonce,count,total,events)=>Program.Log("bridge_chunk",new{source.session,nonce,bytes=count,total,nativeEvents=events}));
+            (nonce,count,total,events)=>Program.Log("bridge_chunk",new{source.session,nonce,bytes=count,total,nativeEvents=events}),
+            ()=>InputGuard==null||InputGuard.Suppressed!=suppressed);
     }
     internal static Task<bool> Command(Config c, string session, string command, Func<bool> enabled, int? requestId = null) => new BridgeDispatcher(new NativeBridgePort(c,enabled)).Send(session,command,requestId);
 }

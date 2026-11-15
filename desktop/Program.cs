@@ -184,10 +184,10 @@ internal sealed class TrayContext : ApplicationContext
                 try { job = new Job(p.Key, await api.Generate(p), DateTime.UtcNow); }
                 catch (Exception ex) { Program.Log("generation_failed", new { p.Key, error = ex.GetType().Name, ex.Message }); job = new Job(p.Key, null, DateTime.UtcNow); }
             }
-            if(connection.Faulted){ObserveWait(p,p.typing?"input_box_focused":!Native.CanUseBridge(p)?(BridgeInputPolicy.Extended(p)?"bridge_modifier_or_reserved_key_held":"communication_key_or_modifier_held"):"transport_recovery");tray.Text=job?.Reply!=null&&!job.Delivered?"大肥鱼 · 回复已缓存，等待回传恢复":"大肥鱼 · 等待按键松开，自动恢复";return;}
+            if(connection.Faulted){ObserveWait(p,!Native.CanUseBridge(p)?Native.BridgeWaitReason(p):"transport_recovery");tray.Text=job?.Reply!=null&&!job.Delivered?"大肥鱼 · 回复已缓存，等待回传恢复":"大肥鱼 · 等待按键松开，自动恢复";return;}
             if(!p.bindingsReady){ObserveWait(p,"bindings_not_ready");tray.Text="大肥鱼 · 专用接收快捷键未就绪";return;}
             if (p.typing) {ObserveWait(p,"input_box_focused");if(job?.Reply!=null&&!job.Delivered&&job.Key==p.Key)tray.Text="大肥鱼 · 回复已缓存，等待输入框关闭";return;}
-            if(job!=null&&!job.Delivered)ObserveWait(p,Native.CanUseBridge(p)?"returning_reply":(BridgeInputPolicy.Extended(p)?"bridge_modifier_or_reserved_key_held":"communication_key_or_modifier_held"));
+            if(job!=null&&!job.Delivered)ObserveWait(p,Native.CanUseBridge(p)?"returning_reply":Native.BridgeWaitReason(p));
             if(job!=null&&job.Key==p.Key&&(p.status=="GENERATING"||(p.status=="READY"&&p.automatic&&p.auto&&!job.Committed&&!p.submitted))) {await Deliver(p);return;}
             if (DateTime.UtcNow >= nextPing)
             {
