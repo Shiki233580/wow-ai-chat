@@ -6,8 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>WhaleChat</AssemblyName>
-    <Version>1.18.22-dev.1</Version>
-    <DefineConstants>$(DefineConstants);DFY_PREVIEW</DefineConstants>
+    <Version>1.18.25</Version>
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
